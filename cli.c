@@ -36,7 +36,7 @@
 #include <http_upload.h>
 #include "cli.h"
 #include "camdriver.h"
-
+#include <lwip/netif.h>
 
 #define MAX_ARGC (10)
 
@@ -123,6 +123,32 @@ static void cmd_capture_upload(uint32_t argc, char *argv[])
     }
 }
 
+static void cmd_ifconfig(uint32_t argc, char *argv[])
+{
+	struct netif* n;
+	for (n = netif_list; n != NULL; n = n->next) {
+		printf("%c%c%d\tHWaddr ", n->name[0], n->name[1], n->num);
+		int i;
+		for(i = 0; i < n->hwaddr_len-1; ++i)
+			printf("%02x:", n->hwaddr[i]);
+		printf("%02x\n", n->hwaddr[n->hwaddr_len-1]);
+		printf("\tinet addr:%d.%d.%d.%d Mask:%d.%d.%d.%d\n",
+		       ip4_addr1_16(&n->ip_addr),
+		       ip4_addr2_16(&n->ip_addr),
+		       ip4_addr3_16(&n->ip_addr),
+		       ip4_addr4_16(&n->ip_addr),
+		       ip4_addr1_16(&n->netmask),
+		       ip4_addr2_16(&n->netmask),
+		       ip4_addr3_16(&n->netmask),
+		       ip4_addr4_16(&n->netmask));
+		printf("\tgateway:%d.%d.%d.%d\n",
+		       ip4_addr1_16(&n->gw),
+		       ip4_addr2_16(&n->gw),
+		       ip4_addr3_16(&n->gw),
+		       ip4_addr4_16(&n->gw));
+	}  
+}
+
 static void cmd_on(uint32_t argc, char *argv[])
 {
     if (argc >= 2) {
@@ -203,6 +229,7 @@ static void handle_command(char *cmd)
         else if (strcmp(argv[0], "upload") == 0) cmd_capture_upload(argc, argv);
         else if (strcmp(argv[0], "on") == 0) cmd_on(argc, argv);
         else if (strcmp(argv[0], "off") == 0) cmd_off(argc, argv);
+	else if (strcmp(argv[0], "ifconfig") == 0) cmd_ifconfig(argc, argv);
         else printf("Unknown command %s, try 'help'\n", argv[0]);
     }
 }

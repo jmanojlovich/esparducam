@@ -28,6 +28,9 @@
 #define OV2640_CHIPID_HIGH  0x0A
 #define OV2640_CHIPID_LOW   0x0B
 
+#define OV5642_CHIPID_HIGH 0x300a
+#define OV5642_CHIPID_LOW 0x300b
+
 // Setup ArducamMini, return true if success
 bool arducam_setup(void);
 

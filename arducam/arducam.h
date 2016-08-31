@@ -120,8 +120,12 @@ typedef enum {
   sz640x480,
   sz800x600,
   sz1024x768,
+  sz1280x720,
   sz1280x1024,
-  sz1600x1200
+  sz1600x1200,
+  sz1920x1080,
+  sz2048x1563,
+  sz2592x1944
 } jpeg_size_t;
 
 struct sensor_reg {
@@ -164,7 +168,7 @@ struct CAM {
 #define CAM2LCD_MODE       		0x01
 #define LCD2MCU_MODE       		0x02
 
-#define ARDUCHIP_TIM       		0x03  //Timming control
+#define ARDUCHIP_TIM       		0x03  //Timing control
 #define HREF_LEVEL_MASK    		0x01  //0 = High active , 		1 = Low active
 #define VSYNC_LEVEL_MASK   		0x02  //0 = High active , 		1 = Low active
 #define LCD_BKEN_MASK      		0x04  //0 = Enable, 			1 = Disable
@@ -172,13 +176,21 @@ struct CAM {
 #define MODE_MASK          		0x10  //0 = LCD mode, 			1 = FIFO mode
 #define FIFO_PWRDN_MASK	   		0x20  //0 = Normal operation, 	1 = FIFO power down
 
+#define BURST_FIFO_READ			0x3C  //Burst FIFO read operation
+#define SINGLE_FIFO_READ		0x3D  //Single FIFO read operation
+
+#define ARDUCHIP_GPIO			0x06  //GPIO Write Register
+#define GPIO_RESET_MASK			0x01  //0 = default state,		1 =  Sensor reset IO value
+#define GPIO_PWDN_MASK			0x02  //0 = Sensor power down IO value, 1 = Sensor power enable IO value
+
 #define ARDUCHIP_FIFO      		0x04  //FIFO and I2C control
 #define FIFO_CLEAR_MASK    		0x01
 #define FIFO_START_MASK    		0x02
-#define FIFO_RDPTR_RST_MASK     0x10
-#define FIFO_WRPTR_RST_MASK     0x20
-
-
+#define FIFO_RDPTR_RST_MASK             0x10
+#define FIFO_WRPTR_RST_MASK             0x20
+#define FIFO_SIZE1                      0x42  //Camera write FIFO size[7:0] for burst to read
+#define FIFO_SIZE2                      0x43  //Camera write FIFO size[15:8]
+#define FIFO_SIZE3                      0x44  //Camera write FIFO size[18:16]
 #define ARDUCHIP_REV       		0x40  //ArduCHIP revision
 #define VER_LOW_MASK       		0x3F
 #define VER_HIGH_MASK      		0xC0
@@ -202,6 +214,7 @@ void arducam_flush_fifo(void);
 void arducam_start_capture(void);
 void arducam_clear_fifo_flag(void);
 uint8_t arducam_read_fifo(void);
+uint32_t arducam_read_fifo_length(void);
 
 uint8_t arducam_read_reg(uint8_t addr);
 void arducam_write_reg(uint8_t addr, uint8_t data);

@@ -29,7 +29,7 @@
 #include <http_upload.h>
 #include "timeutils.h"
 #include "camdriver.h"
-
+#include <esp/spi.h>
 
 #define MIN(a,b) (((a)<(b))?(a):(b))
 #define MAX(a,b) (((a)>(b))?(a):(b))
@@ -41,7 +41,8 @@ bool arducam_setup(void)
 {
     uint8_t vid, pid, temp;
 
-    arducam(smOV2640);
+    arducam(smOV5642);
+
     // Check if the ArduCAM SPI bus is OK
     arducam_write_reg(ARDUCHIP_TEST1, 0x55);
     temp = arducam_read_reg(ARDUCHIP_TEST1);
@@ -53,31 +54,49 @@ bool arducam_setup(void)
     // Change MCU mode
 //    arducam_write_reg(ARDUCHIP_MODE, 0x00);
 
-    // Check if the camera module type is OV2640
-    arducam_i2c_read(OV2640_CHIPID_HIGH, &vid);
-    arducam_i2c_read(OV2640_CHIPID_LOW, &pid);
-    if((vid != 0x26) || (pid != 0x42)) {
-        printf("Error: cannot find OV2640 module (got 0x%02x, 0x%02x)\n", vid, pid);
+    // Clear low power mode
+    arducam_i2c_read(ARDUCHIP_GPIO, &temp);
+    arducam_i2c_write(ARDUCHIP_GPIO, temp & (~GPIO_PWDN_MASK));
+
+    // Check if the camera module type is OV5642
+    arducam_i2c_read_16_8(OV5642_CHIPID_HIGH, &vid);
+    arducam_i2c_read_16_8(OV5642_CHIPID_LOW, &pid);
+    if((vid != 0x56) || (pid != 0x42)) {
+        printf("Error: cannot find OV5642 module (got 0x%02x, 0x%02x)\n", vid, pid);
         return false;
     } else {
-        printf("OV2640 detected\n");
+        printf("OV5642 detected\n");
     }
+
     printf("Setting JPEG\n");
     arducam_set_format(fmtJPEG);
     printf("Init\n");
     arducam_init(); // Note to self. Must call set_format before init.
+
+    arducam_write_reg(ARDUCHIP_TIM, VSYNC_LEVEL_MASK);
+
     printf("Setting size\n");
     arducam_set_jpeg_size(sz640x480);
     // Allow for auto exposure loop to adapt to after resolution change
     printf("Autoexposure working...\n");
     delay_ms(1000);
     printf("Done...\n");
+
+    // Set low power mode
+    arducam_i2c_read(ARDUCHIP_GPIO, &temp);
+    arducam_i2c_write(ARDUCHIP_GPIO, temp  | GPIO_PWDN_MASK);
+
     return true;
 }
 
 bool arducam_capture(void)
 {
     uint8_t temp;
+
+    // Clear low power mode
+    arducam_i2c_read(ARDUCHIP_GPIO, &temp);
+    arducam_i2c_write(ARDUCHIP_GPIO, temp & (~GPIO_PWDN_MASK));
+
     uint32_t start_time = systime_ms();
 
 //    arducam_flush_fifo(); // TODO: These are the same
@@ -94,70 +113,93 @@ bool arducam_capture(void)
         }
         printf("Capture done after %ums\n", systime_ms()-start_time);
     }
+
+    // enable low power mode
+    arducam_i2c_read(ARDUCHIP_GPIO, &temp);
+    arducam_i2c_write(ARDUCHIP_GPIO, temp  | GPIO_PWDN_MASK);
+    
     return true;
 }
 
 void arudcam_fifo_to_socket(int client_sock)
 {
-    uint8_t temp, temp_last = 0, buf_idx = 0;
-    uint32_t fifo_size, bytes_read, start_time = systime_ms();
+    uint32_t bytes_read = 0, start_time = systime_ms();
+  
+    uint32_t len;
+    len = arducam_read_fifo_length();
 
-    fifo_size = (arducam_read_reg(0x44) << 16) | (arducam_read_reg(0x43) << 8) | (arducam_read_reg(0x42));
-    printf("%u bytes in fifo, according to camera\n", fifo_size); 
+    printf("%u bytes in fifo, according to camera\n", len);
 
-    bytes_read = 1;
-    temp = arducam_read_fifo();
-//    printf("%02x ", temp);
-    buffer[buf_idx++] = temp;
-    // Read JPEG data from FIFO
-    while((temp != 0xd9) | (temp_last != 0xff)) {
-        temp_last = temp;
-        temp = arducam_read_fifo();
-        buffer[buf_idx++] = temp;
-        if (client_sock && buf_idx == BUF_SIZE) {
-            int res = write(client_sock, buffer, buf_idx);
-            if (res < 0) {
-                printf("\nERROR: write returned %d\n", res);
-                break;
-            }
-            buf_idx = 0;
-        }
-        bytes_read++;
-        if (bytes_read > fifo_size) {
-            printf("Fifo error\n");
-            break;
-        }
+    if(len >= 393216) {
+      printf("Over size\n");
+      return;
+    } else if(len == 0) {
+      printf("Size is 0.\n");
+      return;
     }
-    if (client_sock && buf_idx > 0) {
-        int res =  write(client_sock, buffer, buf_idx);
-        (void) res;
+
+    arducam_spi_chip_select(0);
+
+    // set fifo burst:
+    spi_transfer_8(1, BURST_FIFO_READ);
+
+    // Read off bad byte
+    spi_transfer_bytes(1, buffer, 1);
+
+    while(len) {
+      size_t will_copy = (len < BUF_SIZE) ? len : BUF_SIZE;
+      spi_transfer_bytes(1, buffer, will_copy);
+      bytes_read += will_copy;
+      if(client_sock) {
+    	int res = write(client_sock, (void*)buffer, will_copy);
+    	if(res < 0) {
+    	  printf("Error: write returned %d\n", res);
+    	  break;
+    	}      
+	len -= will_copy;
+      }
     }
+
+    arducam_spi_chip_unselect(0);
+
     printf("Done, read %u bytes in %ums\n", bytes_read, systime_ms()-start_time);
 }
 
 void arudcam_fifo_to_devnull()
 {
-    uint8_t temp, temp_last = 0, buf_idx = 0;
-    uint32_t fifo_size, bytes_read, start_time = systime_ms();
+    uint32_t bytes_read = 0, start_time = systime_ms();
+  
+    uint32_t len;
+    len = arducam_read_fifo_length();
 
-    fifo_size = (arducam_read_reg(0x44) << 16) | (arducam_read_reg(0x43) << 8) | (arducam_read_reg(0x42));
-    printf("%u bytes in fifo, according to camera\n", fifo_size); 
+    printf("%u bytes in fifo, according to camera\n", len);
 
-    bytes_read = 1;
-    temp = arducam_read_fifo();
-//    printf("%02x ", temp);
-    buffer[buf_idx++] = temp;
-    // Read JPEG data from FIFO
-    while((temp != 0xd9) | (temp_last != 0xff)) {
-        temp_last = temp;
-        temp = arducam_read_fifo();
-        bytes_read++;
-        if (bytes_read > fifo_size) {
-            printf("Fifo error\n");
-            break;
-        }
+    if(len >= 393216) {
+      printf("Over size\n");
+      return;
+    } else if(len == 0) {
+      printf("Size is 0.\n");
+      return;
     }
-    printf("Done, read %u bytes in %ums\n", bytes_read, systime_ms()-start_time);
+
+    arducam_spi_chip_select(0);
+
+    // set fifo burst:
+    spi_transfer_8(1, BURST_FIFO_READ);
+
+    // Read off bad byte
+    spi_transfer_bytes(1, buffer, 1);
+
+    while(len) {
+      size_t will_copy = (len < BUF_SIZE) ? len : BUF_SIZE;
+      spi_transfer_bytes(1, buffer, will_copy);
+      bytes_read += will_copy;
+      len -= will_copy;
+    }
+
+    arducam_spi_chip_unselect(0);
+
+    printf("Done, read %u bytes in %ums\n", bytes_read, systime_ms()-start_time);  
 }
 
 void arudcam_upload_fifo(char *host, uint16_t port)
@@ -166,7 +208,7 @@ void arudcam_upload_fifo(char *host, uint16_t port)
     uint32_t http_res, fifo_size, bytes_read, start_time = systime_ms();
 
     fifo_size = (arducam_read_reg(0x44) << 16) | (arducam_read_reg(0x43) << 8) | (arducam_read_reg(0x42));
-    printf("%u bytes in fifo, according to camera\n", fifo_size); 
+    printf("%u bytes in fifo, according to camera\n", fifo_size);
 
     do {
         printf("Connecting to server...\n");
@@ -222,3 +264,4 @@ void arudcam_upload_fifo(char *host, uint16_t port)
         printf("Done, read %u bytes in %ums, server responded with %d\n", bytes_read, systime_ms()-start_time, http_res);
     } while(0);
 }
+

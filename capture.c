@@ -30,7 +30,7 @@
 #include <string.h>
 #include <FreeRTOS.h>
 #include <task.h>
-#include <spi.h>
+#include <esp/spi.h>
 #include <i2c/i2c.h>
 #include <http_upload.h>
 #include <arducam.h>
@@ -51,7 +51,7 @@
 //#define CONFIG_NO_WIFI
 //#define CONFIG_NO_PIR
 
-#define ARDUCAM_PWR  (15) // Arducam Mini power enable
+#define ARDUCAM_PWR  (16) // Arducam Mini power enable
 
 #define BUF_SIZE (200)
 static char buffer[BUF_SIZE];
@@ -218,4 +218,6 @@ void user_init(void)
 #ifndef CONFIG_NO_PIR
     xTaskCreate(&pir_task, (signed char *) "pir_task", 256, NULL, 2, NULL);
 #endif // CONFIG_NO_PIR
+
+    ota_tftp_init_server(TFTP_PORT);
 }
